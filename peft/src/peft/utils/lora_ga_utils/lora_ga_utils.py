@@ -69,6 +69,7 @@ def estimate_gradient(
     origin_type="bf16",
     quant_type="nf4",
     no_split_module_classes=None,
+    grad_save_path=None,
 ) -> Dict[str, List[torch.Tensor]]:
     """
     Estimates the gradients of a model's parameters over a dataset.
@@ -85,6 +86,11 @@ def estimate_gradient(
     Returns:
         Dict[str, List[torch.Tensor]]: A dictionary mapping parameter names to their estimated gradients.
     """
+    print(f"Estimating gradient, model device={model.device.type}")
+    if grad_save_path is not None and os.path.exists(grad_save_path):
+        print(f"Loading precomputed gradient from {grad_save_path}")
+        return torch.load(grad_save_path)
+
     if accelerator and model.device.type != "cuda":
         if not quant_flag:
             model.to(accelerator.device)
@@ -97,6 +103,7 @@ def estimate_gradient(
     from .offload_utils_for_quant import show_gpu_and_cpu_memory
     from .offload_utils_for_quant import OffloadContext
 
+    """
     with OffloadContext(
         model=model,
         named_grads=named_grads,
@@ -105,25 +112,26 @@ def estimate_gradient(
         quant_type=quant_type,
         no_split_module_classes=no_split_module_classes,
     ):
-        for batch in tqdm(dataloader, desc="Estimating gradient"):
-            print(f"batch_size=", len(batch["input_ids"]))
-            print("before forward===========================================================")
-            show_gpu_and_cpu_memory()
-            num_batch += 1
-            batch = {k: v for k, v in batch.items()}
-            outputs = model(**batch)
-            show_gpu_and_cpu_memory()
-            print("before backward===========================================")
-            show_gpu_and_cpu_memory()
-            outputs.loss.backward()
-            print("after backward ===========================================================")
-            show_gpu_and_cpu_memory()
+    """
+    for batch in tqdm(dataloader, desc="Estimating gradient"):
+        print(f"batch_size=", len(batch["input_ids"]))
+        print("before forward===========================================================")
+        show_gpu_and_cpu_memory()
+        num_batch += 1
+        batch = {k: v for k, v in batch.items()}
+        outputs = model(**batch)
+        show_gpu_and_cpu_memory()
+        print("before backward===========================================")
+        show_gpu_and_cpu_memory()
+        outputs.loss.backward()
+        print("after backward ===========================================================")
+        show_gpu_and_cpu_memory()
 
-            get_record_gradient_hook(model, named_grads)(None)  # get gradient of last layer
-            # make sure the gradient is cleared
-            for grad_name, param in model.named_parameters():
-                if param.grad is not None:
-                    param.grad = None
+        get_record_gradient_hook(model, named_grads)(None)  # get gradient of last layer
+        # make sure the gradient is cleared
+        for grad_name, param in model.named_parameters():
+            if param.grad is not None:
+                param.grad = None
     for grad_name, _ in named_grads.items():
         named_grads[grad_name] /= num_batch
     torch.cuda.empty_cache()
@@ -135,6 +143,15 @@ def estimate_gradient(
             dist.all_reduce(processed_gradient, op=dist.ReduceOp.AVG)
             named_grads[name] = processed_gradient.to("cpu")
     named_grads = {".".join(k.split(".")[:-1]): v for k, v in named_grads.items()}
+
+    if grad_save_path is not None:
+        if accelerator and accelerator.num_processes > 1:
+            if accelerator.is_main_process:
+                torch.save(named_grads, grad_save_path)
+            accelerator.wait_for_everyone()
+        else:
+            torch.save(named_grads, grad_save_path)
+
     return named_grads
 
 
@@ -168,7 +185,7 @@ def save_loraga_model_final(model: PeftModel, save_dir: str):
     init_suffix = "init_lora_checkpoint"
 
     tmp_save_dir = save_dir
-    model.save_pretrained(tmp_save_dir, path_initial_model_for_weight_conversion=os.path.join(save_dir, init_suffix))
+    model.save_pretrained(tmp_save_dir)#, path_initial_model_for_weight_conversion=os.path.join(save_dir, init_suffix))
 
     tmp_save_dir = os.path.join(save_dir, init_suffix)
     if os.path.exists(tmp_save_dir):

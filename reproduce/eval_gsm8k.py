@@ -25,7 +25,7 @@ def main(model_name):
     _, _, test_set = load_gsm8k()
     model_type = "CausalLM"
     model, tokenizer = initialize_text_to_text_model(
-        model_name, model_type, True, tokenizer="meta-llama/Llama-2-7b-hf",flash_attention=True
+        model_name, model_type, True, tokenizer="meta-llama/Llama-2-7b-hf",flash_attention=False
     )
     all = 0
     correct = 0

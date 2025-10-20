@@ -291,7 +291,7 @@ def load_meta_math_5k(max_tokens=512):
     dataset = load_dataset("meta-math/MetaMathQA", split="train")
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
 
     def preprocess(data):
         return {
@@ -338,7 +338,7 @@ def load_meta_math(max_tokens=512):
     dataset = load_dataset("meta-math/MetaMathQA", split="train")
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
 
     def preprocess(data):
         return {
@@ -385,7 +385,7 @@ def load_meta_math_full(max_tokens=512):
     dataset = load_dataset("meta-math/MetaMathQA", split="train")
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
 
     def preprocess(data):
         return {
@@ -421,7 +421,7 @@ def load_flan_v2(max_tokens=512):
     dataset = load_dataset("SirNeural/flan_v2", split="train", streaming=True)
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
 
     def preprocess(data):
         return {
@@ -465,7 +465,7 @@ def load_codefeedback(max_tokens=1024):
     dataset = load_dataset("m-a-p/CodeFeedback-Filtered-Instruction", split="train")
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
 
     def preprocess(data):
         y = data["answer"]
@@ -513,7 +513,7 @@ def load_wizardlm(max_tokens=1024):
     dataset = load_dataset("silk-road/Wizard-LM-Chinese-instruct-evol", split="train")
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-2-7b-hf")
+    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
 
     def preprocess(data):
         y = data["output"]

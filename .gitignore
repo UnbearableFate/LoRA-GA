@@ -8,3 +8,4 @@ results*/
 tmp.py
 code_eval/
 wandb/
+**.sh.o**

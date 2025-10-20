@@ -346,7 +346,7 @@ def run_exp(cfg: DictConfig):
     )
     train_set, val_set, _ = dataset_func()
     model, tokenizer = initialize_text_to_text_model(
-        model_name, model_type, cfg.model.bf16, cfg.peft.use_peft, flash_attention=True
+        model_name, model_type, cfg.model.bf16, cfg.peft.use_peft, flash_attention=False
     )
     additional_kwargs = {}
     if use_peft and cfg.init.mode == "gradient":

@@ -1,6 +1,6 @@
 import torch
+from fire import Fire
 
-# >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 from peft import PeftModel, LoraGAConfig, get_peft_model
 from peft.utils.lora_ga_utils import (
     estimate_gradient,
@@ -9,7 +9,6 @@ from peft.utils.lora_ga_utils import (
     save_loraga_model_final,
 )
 
-# <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 from accelerate import Accelerator
 from utils import (
     transform_dataset,
@@ -22,19 +21,59 @@ import wandb
 import os
 
 
-def main():
-    wandb.init(mode="disabled")
+def get_base_llama_lmodel(model, dtype="bf16"):
+    model_name = "meta-llama/Llama-3.1-8B"
+    model_type = "CausalLM"
+    if dtype in ["nf4", "int8"]:
+        float_attr_list = list(model.__dict__.keys())
+        float_llama_config_attr_list = list(model.config.__dict__.keys())
+        del model
+        model, tokenizer = initialize_text_to_text_model(
+            model_name, model_type, dtype=dtype
+        )
+        print(f"dtype of model is {dtype}, so dequantize model")
+        print("before dequantize======================================")
+        print(model)
+        model = model.dequantize()
+        quant_attr_list = list(model.__dict__.keys())
+        quant_llama_config_attr_list = list(model.config.__dict__.keys())
+        for attr in quant_attr_list:
+            if attr not in float_attr_list:
+                delattr(model, attr)
+        for attr in quant_llama_config_attr_list:
+            if attr not in float_llama_config_attr_list:
+                delattr(model.config, attr)
+        model = model.bfloat16()
+        model = model.to("cuda:0")
+        print("finish dequnatize=======================================")
+        print(model)
+    return model
+
+
+def main(lora_alpha=8, lora_rank=32, sample_size=128, seed=31):
     accelerator = Accelerator()
-    model_id = "meta-llama/Llama-2-7b-hf"
+    model_id = "meta-llama/Llama-3.1-8B"
     model_type = "CausalLM"
     model_dtype = "bf16"
+    dataset_name = "meta_math"
+
     config = dict(
-        model="q4llama",
-        a=8,
-        r=32,
-        s=128,
+        model="q4llama31",
+        d=dataset_name,
+        a=lora_alpha,
+        r=lora_rank,
+        s=sample_size,
+        sd=seed,
+        version="2",
     )
     wandb_name = "_".join([f"{k}={v}" for k, v in config.items()])
+    if accelerator.is_local_main_process:
+        wandb.init(
+            name=wandb_name,
+            mode="offline",
+            group="test",
+            project="LoRA-GA in PEFT",
+        )
 
     model, tokenizer = initialize_text_to_text_model(
         model_id, model_type, model_dtype, flash_attention=False
@@ -49,7 +88,6 @@ def main():
         iters=config["s"] // 2,
     )
 
-    dataset_name = "meta_math"
     dataset_func = DATASET_MAP[dataset_name]
     train_set, val_set, _ = dataset_func()
     if isinstance(train_set, list):
@@ -64,21 +102,19 @@ def main():
     )
     dataloader = torch.utils.data.DataLoader(temp_set, batch_size=peft_config.bsz)
 
-    """
-    regain the quant-model
-    """
     quant_type = "nf4"
+    model = get_base_llama_lmodel(model, dtype=quant_type)
     named_grad = estimate_gradient(
         model=model,
         dataloader=dataloader,
         accelerator=accelerator,
-        quant_flag=True,  # if you have GPU memory enough, you can also set quant_flag=Ture to acclerate estimate_gradient
+        quant_flag=True,
         origin_type="bf16",
         quant_type=quant_type,
     )
     del model
     torch.cuda.empty_cache()
-    
+
     model_dtype = quant_type
     model, tokenizer = initialize_text_to_text_model(
         model_id, model_type, model_dtype, flash_attention=False
@@ -115,7 +151,7 @@ def main():
         learning_rate=2e-5,
         num_process=accelerator.num_processes,
         gradient_checkpointing=False,
-        seed=31,
+        seed=seed,
         training_args=dict(
             lr_scheduler_type="cosine",
             max_grad_norm=1.0,
@@ -133,4 +169,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    Fire(main)

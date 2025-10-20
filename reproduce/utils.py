@@ -268,7 +268,7 @@ def train_text_to_text_model(
         bf16=kwargs.get("bf16", False),
         gradient_checkpointing=kwargs.get("gradient_checkpointing", False),
         optim=kwargs.get("optim", "adamw_torch"),
-        evaluation_strategy="steps",
+        eval_strategy="steps",
         eval_steps=eval_steps,
         save_steps=eval_steps,
         save_strategy="steps",

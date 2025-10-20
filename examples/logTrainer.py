@@ -55,17 +55,19 @@ class LogTrainer(Trainer):
         ] = None,
     ):
         super().__init__(
-            model,
-            args,
-            data_collator,
-            train_dataset,
-            eval_dataset,
-            tokenizer,
-            model_init,
-            compute_metrics,
-            callbacks,
-            optimizers,
-            preprocess_logits_for_metrics,
+            model=model,
+            args=args,
+            data_collator=data_collator,
+            train_dataset=train_dataset,
+            eval_dataset=eval_dataset,
+            processing_class=tokenizer,
+            model_init=model_init,
+            compute_loss_func=None,
+            compute_metrics=compute_metrics,
+            callbacks=callbacks,
+            optimizers=optimizers,
+            optimizer_cls_and_kwargs=None,
+            preprocess_logits_for_metrics=preprocess_logits_for_metrics,
         )
         self.is_peft = "PeftModel" in type(model).__name__
         if self.is_peft:
@@ -79,10 +81,15 @@ class LogTrainer(Trainer):
         self.gradient_accumulation_counter = 0
 
     def training_step(
-        self, model: nn.Module, inputs: Dict[str, Union[torch.Tensor, Any]]
+        self,
+        model: nn.Module,
+        inputs: Dict[str, Union[torch.Tensor, Any]],
+        num_items_in_batch: Optional[int] = None,
     ) -> torch.Tensor:
         if not do_log:
-            return super().training_step(model, inputs)
+            return super().training_step(
+                model, inputs, num_items_in_batch=num_items_in_batch
+            )
         if self.is_peft:
             if self.orig_A is None:
                 self.orig_A = {}

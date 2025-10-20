@@ -7,9 +7,10 @@ gpu_ids: all
 machine_rank: 0
 main_training_function: main
 mixed_precision: bf16
-num_machines: 1
+num_machines: 4
 num_processes: 4
 rdzv_backend: static
+rdzv_endpoint:
 same_network: true
 tpu_env: []
 tpu_use_cluster: false
