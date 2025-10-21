@@ -287,11 +287,11 @@ def load_flan():
 
 
 @cache_to_disk("data_cache")
-def load_meta_math_5k(max_tokens=512):
+def load_meta_math_5k(max_tokens=512, tokenizer_name="meta-llama/Llama-3.1-8B"):
     dataset = load_dataset("meta-math/MetaMathQA", split="train")
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     def preprocess(data):
         return {
@@ -334,11 +334,11 @@ def load_meta_math_5k(max_tokens=512):
 
 
 @cache_to_disk("data_cache")
-def load_meta_math(max_tokens=512):
+def load_meta_math(max_tokens=512, tokenizer_name="meta-llama/Llama-3.1-8B"):
     dataset = load_dataset("meta-math/MetaMathQA", split="train")
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     def preprocess(data):
         return {
@@ -381,11 +381,11 @@ def load_meta_math(max_tokens=512):
 
 
 @cache_to_disk("data_cache")
-def load_meta_math_full(max_tokens=512):
+def load_meta_math_full(max_tokens=512, tokenizer_name="meta-llama/Llama-3.1-8B"):
     dataset = load_dataset("meta-math/MetaMathQA", split="train")
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     def preprocess(data):
         return {
@@ -417,11 +417,11 @@ def load_meta_math_full(max_tokens=512):
 
 
 @cache_to_disk("data_cache")
-def load_flan_v2(max_tokens=512):
+def load_flan_v2(max_tokens=512, tokenizer_name="meta-llama/Llama-3.1-8B"):
     dataset = load_dataset("SirNeural/flan_v2", split="train", streaming=True)
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     def preprocess(data):
         return {
@@ -461,11 +461,11 @@ def load_flan_v2(max_tokens=512):
 
 
 @cache_to_disk("data_cache")
-def load_codefeedback(max_tokens=1024):
+def load_codefeedback(max_tokens=1024, tokenizer_name="meta-llama/Llama-3.1-8B"):
     dataset = load_dataset("m-a-p/CodeFeedback-Filtered-Instruction", split="train")
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     def preprocess(data):
         y = data["answer"]
@@ -509,11 +509,11 @@ def load_codefeedback(max_tokens=1024):
 
 
 @cache_to_disk("data_cache")
-def load_wizardlm(max_tokens=1024):
+def load_wizardlm(max_tokens=1024, tokenizer_name="meta-llama/Llama-3.1-8B"):
     dataset = load_dataset("silk-road/Wizard-LM-Chinese-instruct-evol", split="train")
     from transformers import AutoTokenizer
 
-    tokenizer = AutoTokenizer.from_pretrained("meta-llama/Llama-3.1-8B")
+    tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
 
     def preprocess(data):
         y = data["output"]

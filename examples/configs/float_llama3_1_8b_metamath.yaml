@@ -1,0 +1,51 @@
+run:
+  name: llama3.1-8b_meta_math_a8_r32_s128_sd31
+  seed: 31
+  snapshot_dir: ./snapshot
+  result_dir: peft_test
+  print_model: true
+
+model:
+  id: meta-llama/Llama-3.1-8B
+  type: CausalLM
+  dtype: bf16
+  flash_attention: false
+
+dataset:
+  name: meta_math
+  args:
+    max_tokens: 512
+
+loraga:
+  lora_alpha: 8
+  r: 32
+  bsz: 8
+  sample_size: 128
+  gradient:
+    subset_size: 512
+    quant_flag: false
+    save_path: data_cache/gradients
+
+training:
+  num_train_epochs: 1
+  per_device_batch_size: 8
+  real_batch_size: 128
+  eval_epochs: 1
+  early_stopping_patience: 3
+  max_length: 1024
+  logging_steps: 1
+  use_loraplus: false
+  loraplus_lr_ratio: null
+  learning_rate: 0.0002
+  gradient_checkpointing: false
+  training_args:
+    lr_scheduler_type: cosine
+    max_grad_norm: 1.0
+    warmup_ratio: 0.03
+    weight_decay: 0.0
+
+wandb:
+  enabled: true
+  project: LoRA-GA in PEFT
+  group: test
+  mode: offline

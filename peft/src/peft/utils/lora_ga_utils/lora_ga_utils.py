@@ -86,7 +86,6 @@ def estimate_gradient(
     Returns:
         Dict[str, List[torch.Tensor]]: A dictionary mapping parameter names to their estimated gradients.
     """
-    print(f"Estimating gradient, model device={model.device.type}")
     if grad_save_path is not None and os.path.exists(grad_save_path):
         print(f"Loading precomputed gradient from {grad_save_path}")
         return torch.load(grad_save_path)
@@ -113,6 +112,8 @@ def estimate_gradient(
         no_split_module_classes=no_split_module_classes,
     ):
     """
+    print(f"start estimate gradient, model device: {model.device}")
+
     for batch in tqdm(dataloader, desc="Estimating gradient"):
         print(f"batch_size=", len(batch["input_ids"]))
         print("before forward===========================================================")
