@@ -19,7 +19,7 @@ dataset:
 loraga:
   lora_alpha: 8
   r: 32
-  bsz: 8
+  bsz: 16
   sample_size: 128
   gradient:
     subset_size: 512
@@ -28,12 +28,12 @@ loraga:
 
 training:
   num_train_epochs: 1
-  per_device_batch_size: 8
-  real_batch_size: 128
+  per_device_batch_size: 32
+  real_batch_size: 256
   eval_epochs: 1
   early_stopping_patience: 3
   max_length: 1024
-  logging_steps: 1
+  logging_steps: 5
   use_loraplus: false
   loraplus_lr_ratio: null
   learning_rate: 0.0002

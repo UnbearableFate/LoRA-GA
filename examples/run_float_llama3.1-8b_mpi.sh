@@ -29,7 +29,7 @@ fi
 
 
 PYTHON_PATH="/work/xg24i002/x10041/LoRA-GA/.venv/bin/python"
-TRAIN_CONFIG=${TRAIN_CONFIG:-examples/configs/float_llama3_1_8b_metamath.yaml}
+TRAIN_CONFIG=${TRAIN_CONFIG:-examples/configs/float_Qwen3_1-7b_metamath.yaml}
 
 HF_HOME="/work/xg24i002/x10041/hf_home"
 HF_DATASETS_CACHE="/work/xg24i002/x10041/data"

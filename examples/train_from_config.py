@@ -251,7 +251,7 @@ def main(config: str):
         )
         loaded = PeftModel.from_pretrained(base_model, str(save_dir))
         print(loaded)
-
+    accelerator.wait_for_everyone()
 
 if __name__ == "__main__":
     Fire(main)
