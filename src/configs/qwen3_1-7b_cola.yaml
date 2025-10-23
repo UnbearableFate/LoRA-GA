@@ -1,0 +1,66 @@
+run:
+  name: qwen3-1.7b_cola_loraga
+  seed: 42
+  output_dir: ./outputs
+  snapshot_dir: ./snapshot/qwen3-1.7b_cola
+  result_dir: ./results
+
+model:
+  id: Qwen/Qwen3-1.7B
+  type: CausalLM
+  dtype: bf16
+  flash_attention: false
+
+dataset:
+  name: cola
+  split_train: train
+  split_eval: validation
+  max_train_samples: null
+  max_eval_samples: null
+
+loraga:
+  lora_alpha: 16
+  r: 8
+  lora_dropout: 0.05
+  target_modules: null
+  modules_to_save: null
+  init_lora_weights: lora_ns
+  bsz: 16
+  sample_size: 256
+  gradient:
+    subset_size: 512
+    quant_flag: false
+    origin_type: bf16
+    quant_type: nf4
+    save_path: data_cache/gradients
+training:
+  num_train_epochs: 3
+  per_device_batch_size: 64
+  per_device_eval_batch_size: 64
+  real_batch_size: 64
+  eval_steps: 10
+  save_steps: 200
+  save_total_limit: 3
+  logging_steps: 25
+  learning_rate: 0.0002
+  warmup_ratio: 0.03
+  weight_decay: 0.0
+  max_length: 1024
+  generation_max_length: 128
+  generation_num_beams: 1
+  gradient_checkpointing: false
+  early_stopping_patience: 3
+  load_best_model_at_end: true
+  metric_for_best_model: matthews_corrcoef
+  greater_is_better: true
+  training_args:
+    lr_scheduler_type: cosine
+    max_grad_norm: 1.0
+    dataloader_pin_memory: true
+
+wandb:
+  enabled: true
+  project: lora-ga-experiments
+  group: glue-cola
+  mode: offline
+
