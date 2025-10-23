@@ -126,9 +126,12 @@ class LoraLayer(BaseTunerLayer):
         if isinstance(init_lora_weights, str) and init_lora_weights.startswith("pissa"):
             with gather_params_ctx(self.get_base_layer().weight):
                 self.pissa_init(adapter_name, init_lora_weights)
-        if isinstance(init_lora_weights, str) and init_lora_weights.startswith("lora_ga"):
+        elif isinstance(init_lora_weights, str) and init_lora_weights.startswith("lora_ga"):
             with gather_params_ctx(self.get_base_layer().weight):
                 self.lora_ga_init(adapter_name)
+        elif isinstance(init_lora_weights, str) and init_lora_weights.startswith("lora_ns"):
+            with gather_params_ctx(self.get_base_layer().weight):
+                self.lora_ns_init(adapter_name)
         elif isinstance(init_lora_weights, str) and init_lora_weights.lower() == "olora":
             with gather_params_ctx(self.get_base_layer().weight):
                 self.olora_init(adapter_name)
@@ -297,6 +300,424 @@ class LoraLayer(BaseTunerLayer):
             new_base_layer.to(device)
             base_layer.__dict__.update(new_base_layer.__dict__)
             del new_base_layer
+
+    def lora_ns_init(self, adapter_name):
+        """
+        Direct-rank NS-based LoRA initialization (no 2r 'direction' split).
+        Constructs B ∈ R^{d_out×r}, A ∈ R^{r×d_in} directly from the NS polar factor
+        Q ≈ G (G^T G)^(-1/2), using a randomized range finder with target rank r.
+
+        Steps:
+        1) Obtain grad G = dL/dW (from a single calibration backward).
+        2) Q = ns_polar(G)  (no SVD on G).
+        3) Randomized range finder on Q to get V_r (right basis, d_in×r),
+            then U_r = Q @ V_r (d_out×r).
+        4) B_init = scaled U_r; A_init = scaled V_r^T.
+        5) Freeze-compensation: W ← W - offset, where offset = B_init @ A_init
+            (then LoRA forward adds it back, keeping initial forward invariant).
+
+        Notes:
+        - For Conv2d, reshape to 2D before calling this routine (consistent with LoRA-GA usage).
+        - Quantized base layers are handled by materializing float weights (as in LoRA-GA code).
+        """
+
+        # ---------- helpers ----------
+        def get_float_weight(model: torch.nn.Module):
+            # Materialize float weight for quantized linear via forward(I) and removing bias
+            model: torch.nn.Linear
+            device = model.weight.device
+            in_features = model.in_features
+            with torch.no_grad():
+                I = torch.eye(in_features, device=device, dtype=torch.float32)
+                w = model(I)  # [out, in]
+                if hasattr(model, "bias") and isinstance(model.bias, torch.Tensor):
+                    w = w - model.bias
+                w = w.transpose(0, 1).contiguous()  # [in, out] -> we will keep weight as [d_out, d_in] below
+            w.requires_grad = model.weight.requires_grad
+            return w
+
+        @torch.no_grad()
+        def ns_polar(G: torch.Tensor, steps: int = 5, eps: float = 1e-6) -> torch.Tensor:
+            """
+            Approximate polar factor Q ≈ G (G^T G)^(-1/2) via Newton–Schulz iteration.
+            Returns Q with Q^T Q ≈ I (direction-only; singular values flattened to ~1).
+            """
+            dtype = torch.float32
+            G = G.to(dtype)
+            fro = torch.linalg.norm(G, ord='fro') + eps
+            X = G / fro
+
+            # Improve conditioning for tall matrices by transposing during iteration
+            transposed = X.size(0) > X.size(1)
+            if transposed:
+                X = X.t()
+
+            I = torch.eye(X.size(1), device=X.device, dtype=X.dtype)
+            for _ in range(steps):
+                XtX = X.t() @ X
+                X = 0.5 * X @ (3.0 * I - XtX)
+
+            if transposed:
+                X = X.t()
+            return X  # [d_out, d_in], approximately orthonormal columns (or rows if tall)
+
+        @torch.no_grad()
+        def randomized_right_basis(Q: torch.Tensor, r: int, oversample: int = 4):
+            """
+            Return V_r ∈ R^{d_in×r} as an orthonormal right basis of rank r from Q (no SVD on G).
+            Steps:
+            1) Y = Q^T @ Ω with Ω ∈ R^{d_out×(r+p)}
+            2) Ṽ = orth(Y) via QR
+            3) Truncate to r columns: V_r = Ṽ[:, :r]
+            Then U_r can be formed as U_r = Q @ V_r.
+            """
+            d_out, d_in = Q.shape
+            k = min(r + oversample, min(d_out, d_in))
+            Omega = torch.randn(d_out, k, device=Q.device, dtype=Q.dtype)
+            Y = Q.t() @ Omega                   # [d_in, k]
+            V_tilde, _ = torch.linalg.qr(Y, mode='reduced')  # [d_in, k]
+            return V_tilde[:, :r]               # [d_in, r]
+
+        # ---------- main ----------
+        if "grad" not in self.kwargs.keys():
+            return
+        base_layer = self.get_base_layer()
+        weight_param = base_layer.weight
+        device = weight_param.device
+        orig_dtype = weight_param.dtype
+
+        # Quantized handling: materialize float weights if needed (mirrors LoRA-GA code path)
+        quant_flag = False
+        if orig_dtype not in (torch.float32, torch.float16, torch.bfloat16):
+            quant_flag = True
+            weight = get_float_weight(base_layer).to(torch.float32)
+        else:
+            weight = weight_param.data.to(torch.float32)
+
+        # Gradient from calibration backward
+        G = self.kwargs["grad"].to(device).to(torch.float32)  # [d_out, d_in]
+        if G is None:
+            return
+
+        r = self.r[adapter_name]
+        init_config = self.kwargs["peft_config"]
+
+        # NS / randomized params (defaults if not provided)
+        ns_steps = getattr(init_config, "ns_steps", 5)
+        ns_eps = getattr(init_config, "ns_eps", 1e-6)
+        oversample = getattr(init_config, "oversample", 4)
+
+        # 1) Q = ns_polar(G)  (no SVD on G)
+        Q = ns_polar(G, steps=ns_steps, eps=ns_eps)  # [d_out, d_in]
+
+        # 2) Direct-rank extraction: build V_r (right basis), then U_r = Q @ V_r
+        V_r = randomized_right_basis(Q, r=r, oversample=oversample)   # [d_in, r]
+        U_r = Q @ V_r                                                # [d_out, r]
+
+        # 3) Form A,B directly (no 2r 'direction' split)
+        B = U_r.contiguous()                 # [d_out, r]
+        A = V_r.t().contiguous()             # [r, d_in]
+
+        # 4) Scaling strategies (reuse LoRA-GA naming for compatibility)
+        scaling_factor = self.scaling["default"]  # same global multiplier used in LoRA-GA
+        scale_mode = getattr(init_config, "scale", "stable")  # {'gd','unit','stable','weightS'}
+
+        if scale_mode == "gd":
+            A = A / scaling_factor
+            B = B / scaling_factor
+        elif scale_mode == "unit":
+            # Q is approx orthonormal; keep unit-like columns
+            pass
+        elif scale_mode == "stable":
+            # Forward-scale stability heuristic depending only on d_out (mirrors LoRA-GA spirit)
+            m, n = G.shape
+            gamma = getattr(init_config, "stable_gamma", 1.0)
+            coef = (m ** 0.25) / (gamma ** 0.5 + 1e-12)
+            B = B * coef
+            A = A * coef
+        elif scale_mode == "weightS":
+            # Optional mild scaling using weight spectrum (small-rank SVD on weight only; not on G)
+            try:
+                _, S_w, _ = torch.svd_lowrank(weight.float(), q=min(4 * r, min(weight.shape)), niter=2)
+                S_w = S_w / scaling_factor
+                avg_s = torch.sqrt(S_w[:r]).mean().to(A.device)
+                B = B * avg_s
+                A = A * avg_s
+            except Exception:
+                pass
+
+        # 5) Build offset and optional elementwise clipping
+        offset = (B @ A)  # [d_out, d_in]
+        if getattr(init_config, "norm_clip", False):
+            max_w = torch.max(torch.abs(weight))
+            max_off = torch.max(torch.abs(offset))
+            ratio = max_w / (max_off + 1e-12)
+            if ratio < 1:
+                offset = offset * ratio
+                A = A * (ratio ** 0.5)
+                B = B * (ratio ** 0.5)
+
+        # Apply global scaling factor used in your codebase (keeps compatibility with LoRA-GA)
+        offset = offset * scaling_factor
+
+        # Dtype for adapters
+        if hasattr(init_config, "dtype"):
+            if init_config.dtype == "bf16":
+                A = A.to(torch.bfloat16)
+                B = B.to(torch.bfloat16)
+            elif init_config.dtype == "fp32":
+                A = A.to(torch.float32)
+                B = B.to(torch.float32)
+
+        # Freeze-compensation: keep initial forward invariant
+        weight = weight - offset  # fp32 buffer
+
+        # Write back LoRA params
+        self.lora_A[adapter_name].weight.data = A.contiguous()
+        self.lora_B[adapter_name].weight.data = B.contiguous()
+
+        # Write back base weight (quantized vs float)
+        if not quant_flag:
+            self.get_base_layer().weight.data = weight.to(orig_dtype).contiguous()
+        else:
+            base = base_layer
+            has_bias = (base.bias is not None and isinstance(base.bias.data, torch.Tensor))
+            float_linear = nn.Linear(base.in_features, base.out_features, has_bias)
+            if has_bias:
+                float_linear.bias.data = base.bias.data
+            float_linear.weight.data = weight.contiguous()
+
+            try:
+                import bitsandbytes
+                if isinstance(base, bitsandbytes.nn.Linear8bitLt):
+                    new_base = type(base)(base.in_features, base.out_features, has_bias, has_fp16_weights=False)
+                else:
+                    new_base = type(base)(base.in_features, base.out_features, has_bias)
+            except Exception:
+                new_base = type(base)(base.in_features, base.out_features, has_bias)
+
+            new_base.load_state_dict(float_linear.state_dict())
+            new_base.to(device)
+            base.__dict__.update(new_base.__dict__)
+            del new_base    
+
+
+    def lora_ns_init_backup(self, adapter_name):
+        """
+        NS-based LoRA initialization:
+        1) Use a single calibration backward to read grad G of base weight.
+        2) Compute polar factor Q ≈ G (G^T G)^(-1/2) via Newton–Schulz (no SVD).
+        3) Build a rank-2r right/left orthonormal basis from Q using randomized range finder + QR.
+        4) Choose r columns for B and r rows for A according to init_config.direction (same API as LoRA-GA).
+        5) Apply scaling (gd/unit/stable/weightS compatible choices) and freeze-compensation W -= offset.
+        Notes:
+        - Convs should already be reshaped by caller if needed (consistent with your LoRA codebase).
+        - Quantized weights: mirrors the LoRA-GA path by materializing float weights when necessary.
+        """
+
+        # ---------- helpers ----------
+        def get_float_weight(model: torch.nn.Module):
+            model: torch.nn.Linear
+            device = model.weight.device
+            in_features = model.in_features
+            with torch.no_grad():
+                I = torch.eye(in_features, device=device, dtype=torch.float32)
+                w = model(I)  # [out, in]
+                if hasattr(model, "bias") and isinstance(model.bias, torch.Tensor):
+                    w = w - model.bias  # remove bias effect
+                w = w.transpose(0, 1).contiguous()  # [in, out] -> expect [out, in] later; we keep consistency below
+            w.requires_grad = model.weight.requires_grad
+            return w
+
+        @torch.no_grad()
+        def ns_polar(G: torch.Tensor, steps: int = 5, eps: float = 1e-6) -> torch.Tensor:
+            """
+            Compute polar factor Q ≈ G (G^T G)^(-1/2) via classic Newton–Schulz iteration.
+            Returns Q with Q^T Q ≈ I (direction only; singular values flattened).
+            """
+            dtype = torch.float32  # accumulate in fp32 for stability
+            G = G.to(dtype)
+            fro = torch.linalg.norm(G, ord='fro') + eps
+            X = G / fro
+
+            # If tall matrix, transpose for better conditioning, then transpose back
+            transposed = X.size(0) > X.size(1)
+            if transposed:
+                X = X.t()
+
+            I = torch.eye(X.size(1), device=X.device, dtype=X.dtype)
+            for _ in range(steps):
+                XtX = X.t() @ X
+                X = 0.5 * X @ (3.0 * I - XtX)
+
+            if transposed:
+                X = X.t()
+            return X  # approximately orthogonal
+
+        @torch.no_grad()
+        def randomized_right_left_basis(Q: torch.Tensor, k: int, oversample: int = 4):
+            """
+            Build right/left orthonormal bases (V_tilde in R^{d_in x k}, U_tilde in R^{d_out x k})
+            from Q using randomized range finder WITHOUT SVD on G:
+            1) sample Omega in R^{d_out x (k+p)}
+            2) Y = Q^T @ Omega in R^{d_in x (k+p)}
+            3) V_tilde = orth(Y), U_tilde = Q @ V_tilde
+            """
+            d_out, d_in = Q.shape
+            k_eff = min(k + oversample, min(d_out, d_in))
+            Omega = torch.randn(d_out, k_eff, device=Q.device, dtype=Q.dtype)
+            Y = Q.t() @ Omega                              # [d_in, k_eff]
+            V_tilde, _ = torch.linalg.qr(Y, mode='reduced')  # [d_in, k_eff]
+            U_tilde = (Q @ V_tilde)                        # [d_out, k_eff]
+            return U_tilde[:, :k], V_tilde[:, :k]          # [d_out,k], [d_in,k]
+
+        # ---------- main ----------
+        if "grad" not in self.kwargs:
+            return
+
+        base_layer = self.get_base_layer()
+        weight = base_layer.weight
+        device = weight.device
+        orig_dtype = weight.dtype
+
+        # Handle quantized weights in the same way as LoRA-GA
+        quant_flag = False
+        if orig_dtype not in (torch.float32, torch.float16, torch.bfloat16):
+            quant_flag = True
+            weight = get_float_weight(base_layer).to(torch.float32)
+        else:
+            weight = weight.data.to(torch.float32)
+
+        grad = self.kwargs["grad"].to(device).to(torch.float32)  # [d_out, d_in]
+        if grad is None:
+            return
+
+        lora_r = self.r[adapter_name]
+        init_config = self.kwargs["peft_config"]
+
+        # Parameters for NS and randomized basis (with sane defaults if not provided)
+        ns_steps = getattr(init_config, "ns_steps", 5)
+        ns_eps = getattr(init_config, "ns_eps", 1e-6)
+        oversample = getattr(init_config, "oversample", 4)
+
+        # 1) Polar factor (no SVD on G)
+        Q = ns_polar(grad, steps=ns_steps, eps=ns_eps)  # [d_out, d_in], Q^T Q ≈ I
+
+        # 2) Build a 2r subspace basis to emulate LoRA-GA "direction" options
+        two_r = min(2 * lora_r, min(Q.shape))
+        U_basis, V_basis = randomized_right_left_basis(Q, k=two_r, oversample=oversample)  # [d_out,2r], [d_in,2r]
+
+        # 3) Direction selection (mirror LoRA-GA API)
+        direction = getattr(init_config, "direction", "A2rBr")
+        if direction == "ArBr":
+            # B uses even indices, A uses odd indices
+            B = U_basis[:, 0:2 * lora_r:2]                    # [d_out, r]
+            A = V_basis[:, 1:2 * lora_r:2].t().contiguous()   # [r, d_in]
+        elif direction == "A2rBr":
+            B = U_basis[:, :lora_r]                           # [d_out, r]
+            A = V_basis[:, lora_r:2 * lora_r].t().contiguous()# [r, d_in]
+        elif direction == "ArB2r":
+            B = U_basis[:, lora_r:2 * lora_r]                 # [d_out, r]
+            A = V_basis[:, :lora_r].t().contiguous()          # [r, d_in]
+        elif direction == "random":
+            import random
+            idx = list(range(two_r))
+            random.shuffle(idx)
+            idx_A = idx[:lora_r]
+            idx_B = idx[lora_r:2 * lora_r]
+            B = U_basis[:, idx_B]
+            A = V_basis[:, idx_A].t().contiguous()
+        else:
+            # default fallback
+            B = U_basis[:, :lora_r]
+            A = V_basis[:, lora_r:2 * lora_r].t().contiguous()
+
+        # 4) Scaling strategies (compatible names with LoRA-GA)
+        scaling_factor = self.scaling["default"]  # same meaning as in LoRA-GA code
+        scale_mode = getattr(init_config, "scale", "stable")  # {gd, unit, stable, weightS}
+
+        if scale_mode == "gd":
+            A = A / scaling_factor
+            B = B / scaling_factor
+        elif scale_mode == "unit":
+            # Q is approximately orthogonal, A/B already have unit-like columns
+            pass
+        elif scale_mode == "stable":
+            # Forward-scale stable (depends only on d_out), mirroring LoRA-GA's rule of thumb
+            m, n = grad.shape  # m=d_out, n=d_in
+            gamma = getattr(init_config, "stable_gamma", 1.0)
+            coef = (m ** 0.25) / (gamma ** 0.5 + 1e-12)
+            B = B * coef
+            A = A * coef
+        elif scale_mode == "weightS":
+            # Use weight spectrum as a mild scale reference (low-rank approx without heavy SVD)
+            # Here we avoid SVD on G, but for weight we allow a small-rank SVD like original if desired.
+            try:
+                # Note: small-rank SVD on weight for scaling only (q=4r like LoRA-GA)
+                _, S_w, _ = torch.svd_lowrank(weight.float(), q=min(4 * lora_r, min(weight.shape)), niter=2)
+                S_w = S_w / scaling_factor
+                avg_s = torch.sqrt(S_w[:lora_r]).mean().to(A.device)
+                B = B * avg_s
+                A = A * avg_s
+            except Exception:
+                pass  # fall back silently
+
+        # 5) Offset and dtype handling
+        offset = (B @ A)  # [d_out, d_in]
+        # Optional norm-clip (same logic as LoRA-GA)
+        if getattr(init_config, "norm_clip", False):
+            max_w = torch.max(torch.abs(weight))
+            max_off = torch.max(torch.abs(offset))
+            ratio = (max_w / (max_off + 1e-12))
+            if ratio < 1:
+                offset = offset * ratio
+                A = A * (ratio ** 0.5)
+                B = B * (ratio ** 0.5)
+
+        # Apply global scaling factor used in your codebase
+        offset = offset * scaling_factor
+
+        # Dtype cast for adapters
+        if hasattr(init_config, "dtype"):
+            if init_config.dtype == "bf16":
+                A = A.to(torch.bfloat16)
+                B = B.to(torch.bfloat16)
+            elif init_config.dtype == "fp32":
+                A = A.to(torch.float32)
+                B = B.to(torch.float32)
+
+        # Freeze-compensation: adjust base weight to keep initial forward unchanged
+        weight = weight - offset  # fp32 buffer
+
+        # Write back to module and LoRA params
+        self.lora_A[adapter_name].weight.data = A.contiguous()
+        self.lora_B[adapter_name].weight.data = B.contiguous()
+
+        if not quant_flag:
+            # Cast back to original dtype and store
+            self.get_base_layer().weight.data = weight.to(orig_dtype).contiguous()
+        else:
+            # Replace quantized base layer with a new one holding the updated float weights, mirroring LoRA-GA flow
+            base = base_layer
+            has_bias = (base.bias is not None and isinstance(base.bias.data, torch.Tensor))
+            float_linear = nn.Linear(base.in_features, base.out_features, has_bias)
+            if has_bias:
+                float_linear.bias.data = base.bias.data
+            float_linear.weight.data = weight.contiguous()
+
+            try:
+                import bitsandbytes
+                if isinstance(base, bitsandbytes.nn.Linear8bitLt):
+                    new_base = type(base)(base.in_features, base.out_features, has_bias, has_fp16_weights=False)
+                else:
+                    new_base = type(base)(base.in_features, base.out_features, has_bias)
+            except Exception:
+                new_base = type(base)(base.in_features, base.out_features, has_bias)
+
+            new_base.load_state_dict(float_linear.state_dict())
+            new_base.to(device)
+            base.__dict__.update(new_base.__dict__)
+            del new_base
 
     def olora_init(self, adapter_name):
         dtype = self.get_base_layer().weight.dtype

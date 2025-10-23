@@ -221,6 +221,8 @@ def train_text_to_text_model(
     per_device_batch_size: int = 1,
     real_batch_size: int = 32,
     max_length: int = None,
+    report_to = None,
+    compute_metrics_fn: tp.Optional[tp.Callable[[tp.Any], tp.Dict[str, float]]] = None,
     **kwargs,
 ) -> torch.nn.Module:
     # Preprocess the dataset
@@ -237,9 +239,6 @@ def train_text_to_text_model(
         model_type, tokenizer, train_dataset, max_length
     ), transform_dataset(model_type, tokenizer, valid_dataset, max_length)
 
-    eval_steps = (
-        int(len(train_dataset) * kwargs.get("eval_epochs", 1)) // real_batch_size
-    )
     TrainingArgumentsClass = Seq2SeqTrainingArguments
     TrainerClass = LogTrainer
     output_dir = f"./results/{run_name}/{kwargs.get('seed')}"
@@ -255,8 +254,8 @@ def train_text_to_text_model(
         gradient_checkpointing=kwargs.get("gradient_checkpointing", False),
         optim=kwargs.get("optim", "adamw_torch"),
         eval_strategy="steps",
-        eval_steps=eval_steps,
-        save_steps=eval_steps,
+        eval_steps=kwargs.get("eval_steps", 50),
+        save_steps=kwargs.get("save_steps", 100),
         save_strategy="steps",
         save_total_limit=1,
         load_best_model_at_end=kwargs.get("load_best_model_at_end", True),
@@ -269,6 +268,7 @@ def train_text_to_text_model(
         label_names=["labels"],
         seed=kwargs.get("seed", 42),
         ddp_find_unused_parameters=False,
+        report_to=report_to,
         **kwargs.get("training_args", {}),
     )
     """
@@ -279,19 +279,32 @@ def train_text_to_text_model(
     if you want to specify compute_metrics for TrainingAguments, you can (should) specify preprocess_logits_for_metrics for Trainer to to avoid
     `cuda out of memory`
     """
+    
+    model.to("cuda:0")
+
+    preprocess_logits_for_metrics = None
+    if compute_metrics_fn is not None:
+        def preprocess_logits_for_metrics(logits, labels):
+            if isinstance(logits, tuple):
+                logits = logits[0]
+            return logits.argmax(dim=-1)
 
     trainer = TrainerClass(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=valid_dataset,
-        compute_metrics=None,
+        compute_metrics=compute_metrics_fn,
+        preprocess_logits_for_metrics=preprocess_logits_for_metrics,
+    )
+    """
         callbacks=[
             EarlyStoppingCallback(
                 early_stopping_patience=kwargs.get("early_stopping_patience", 1)
             ),
         ],
     )
+    """
 
     trainer.train()
 

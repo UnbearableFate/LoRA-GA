@@ -1,5 +1,5 @@
 run:
-  name: Qwen3-1.7B_meta_math_a8_r32_s128_sd31_ns
+  name: Qwen3-1.7B_meta_math_a8_r32_s128_sd31
   seed: 31
   snapshot_dir: ./snapshot
   result_dir: peft_test
@@ -12,9 +12,7 @@ model:
   flash_attention: false
 
 dataset:
-  name: meta_math
-  args:
-    max_tokens: 512
+  name: cola
 
 loraga:
   lora_alpha: 8
@@ -28,10 +26,11 @@ loraga:
     save_path: data_cache/gradients
 
 training:
-  num_train_epochs: 20
-  per_device_batch_size: 8
-  real_batch_size: 128
-  eval_epochs: 1
+  num_train_epochs: 5
+  per_device_batch_size: 128
+  real_batch_size: 512
+  eval_steps: 10
+  save_steps: 100
   early_stopping_patience: 3
   max_length: 1024
   logging_steps: 10

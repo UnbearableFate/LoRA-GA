@@ -194,7 +194,7 @@ class LoraConfig(PeftConfig):
         },
     )
     init_lora_weights: (
-        bool | Literal["gaussian", "olora", "pissa", "pissa_niter_[number of iters]", "loftq", "lora_ga"]
+        bool | Literal["gaussian", "olora", "pissa", "pissa_niter_[number of iters]", "loftq", "lora_ga" ,"lora_ns"]
     ) = field(
         default=True,
         metadata={
@@ -416,4 +416,4 @@ class LoraGAConfig(LoraConfig):
     def __post_init__(self):
         super().__post_init__()
         self.peft_type = PeftType.LORAGA
-        self.init_lora_weights = "lora_ga"
+        #self.init_lora_weights = "lora_ga"

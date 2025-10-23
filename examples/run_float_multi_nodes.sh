@@ -1,13 +1,16 @@
 #!/bin/bash
 #PBS -q regular-g
 #PBS -W group_list=xg24i002
-#PBS -l select=4:mpiprocs=1
-#PBS -l walltime=01:00:00
+#PBS -l select=8:mpiprocs=1
+#PBS -l walltime=01:30:00
 #PBS -j oe
+#PBS -m abe
 
 set -euo pipefail
 
 cd "${PBS_O_WORKDIR:-$(pwd)}"
+
+TRAIN_CONFIG=${TRAIN_CONFIG:-examples/configs/float_Qwen3_1-7b_metamath.yaml}
 
 ACCELERATE_CONFIG=${ACCELERATE_CONFIG:-examples/configs/accelerate_config.yaml}
 MASTER_PORT=${MASTER_PORT:-29500}
@@ -29,7 +32,6 @@ fi
 
 
 PYTHON_PATH="/work/xg24i002/x10041/LoRA-GA/.venv/bin/python"
-TRAIN_CONFIG=${TRAIN_CONFIG:-examples/configs/float_Qwen3_1-7b_metamath.yaml}
 
 HF_HOME="/work/xg24i002/x10041/hf_home"
 HF_DATASETS_CACHE="/work/xg24i002/x10041/data"

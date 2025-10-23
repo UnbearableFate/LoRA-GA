@@ -4,7 +4,7 @@ set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")"/.. && pwd)
 ACCELERATE_CONFIG=${ACCELERATE_CONFIG:-examples/configs/accelerate_config_local.yaml}
-TRAIN_CONFIG=${TRAIN_CONFIG:-examples/configs/float_Qwen3_1-7b_metamath.yaml}
+TRAIN_CONFIG=${TRAIN_CONFIG:-examples/configs/float_Qwen3_1-7b_cola.yaml}
 DEFAULT_PYTHON="${ROOT_DIR}/.venv/bin/python"
 PYTHON_PATH=${PYTHON_PATH:-${DEFAULT_PYTHON}}
 HF_HOME=${HF_HOME:-${ROOT_DIR}/hf_home}

@@ -88,7 +88,7 @@ def estimate_gradient(
     """
     if grad_save_path is not None and os.path.exists(grad_save_path):
         print(f"Loading precomputed gradient from {grad_save_path}")
-        return torch.load(grad_save_path)
+        return torch.load(grad_save_path, map_location="cuda:0")
 
     if accelerator and model.device.type != "cuda":
         if not quant_flag:

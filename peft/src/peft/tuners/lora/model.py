@@ -940,7 +940,7 @@ class LoraGAModel(LoraModel):
         parent,
         current_key,
     ):
-        if lora_config.init_lora_weights != "lora_ga" or self.named_grad is None:
+        if lora_config.init_lora_weights not in ["lora_ga", "lora_ns"] or self.named_grad is None:
             super()._create_and_replace(
                 lora_config,
                 adapter_name,
@@ -970,7 +970,7 @@ class LoraGAModel(LoraModel):
             "loaded_in_8bit": getattr(self.model, "is_loaded_in_8bit", False),
             "loaded_in_4bit": getattr(self.model, "is_loaded_in_4bit", False),
         }
-        if lora_config.init_lora_weights == "lora_ga" and self.named_grad is not None:
+        if lora_config.init_lora_weights in ["lora_ga", "lora_ns"] and self.named_grad is not None:
             kwargs.update({"peft_config": self.peft_config[adapter_name], "grad": self.named_grad[current_key]})
         quant_methods = ["gptq", "aqlm", "awq"]
         for quant_method in quant_methods:
